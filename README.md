@@ -236,15 +236,10 @@ ModelOutput *model_output = model_eval_frame(&model, buf_main, nullptr, model_tr
 ```C
   //const ModelOutputStopLines stop_lines;
 ```
-5. Change camera position
- * Modify `/openpilot/tools/sim/bridge.py` line 268, from `carla.Location(x=0.8, z=1.13)` to `carla.Location(x=-1.5, z=2.0)`
-```python
-transform = carla.Transform(carla.Location(x=-1.5, z=2.0))
-```
-6. Compile
+5. Compile
 ```bash
 cd /openpilot
 scons -j$(nproc)
 ```
-7. Then you can run Openpilot in custom version
+6. Then you can run Openpilot in custom version
 
