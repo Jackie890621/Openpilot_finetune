@@ -2,15 +2,16 @@
 
 ## Introduction
 
-This repository allows training custom driving models for [Openpilot](https://github.com/commaai/openpilot) using datasets collected from [Roach](https://github.com/zhejz/carla-roach).
+This repository allows training custom driving models for [Openpilot](https://github.com/commaai/openpilot) using datasets collected from [Roach](https://github.com/zhejz/carla-roach) and [Comma2k19](https://github.com/commaai/comma2k19).
 
-we leverage the adapter architecture to fine-tune the Supercombo model using datasets collected from a reinforcement learning agent in the CARLA simulator. This approach allows us to preserve the original weights in Openpilot, which have been trained on a large-scale dataset using significant computing resources. The adapter architecture enables efficient adaptation of pretrained models for downstream tasks. Our approach not only includes path prediction but also incorporates lead car prediction.
+we leverage the adapter architecture to fine-tune the Supercombo model using datasets collected from a reinforcement learning agent in the CARLA simulator. This approach allows us to preserve the original weights in Openpilot, which have been trained on a large-scale dataset using significant computing resources. The adapter architecture enables efficient adaptation of pretrained models for downstream tasks. Our approach not only includes path prediction and lead car prediction but also incorporates lane lines detection.
 
 * [Directory Structure](#directory-structure) 
 * [Quick Preview](#quick-preview)
     * [Adapter](#adapter)
     * [Multi-Task Learning](#multi-task-learning)
     * [Balanced Regression](#balanced-regression)
+    * [Phase training](#phase-training)
 * [Data Collection](#data-collection)
 * [Installations](#installations)
 * [Training](#training)
@@ -23,7 +24,7 @@ we leverage the adapter architecture to fine-tune the Supercombo model using dat
 ## Directory Structure
 
 ```
-Openpilot_BalancedRegression_Adapter
+Openpilot_finetune
 ├── Openpilot_lateralMPC   - For changing lateralMPC of Openpilot in docker.
 ├── common                 - Library like functionality from Openpilot.  Ex. Coordinate transformation
 ├── train                  - Main training code.
@@ -80,18 +81,31 @@ def gai_loss(pred, target, gmm, noise_scale):
 
     return loss.squeeze()
 ```
+### Phase training
+The fine-tuning procedure for the Supercombo model involves the following phases:
+
+* First phase: Utilize Carla-Roach datasets to fine-tune Supercombo model for leading car prediction and path prediction.
+* Second phase: Further fine-tune the model from First phase using Comma2k19 datasets to enhance lane lines detection.
+* Third phase: Fine-tune the model from Second phase using Carla-Roach datasets to integrate leading car prediction, path prediction, and lane lines detection
+
 ## Data Collection
-The dataset [Roach](https://github.com/zhejz/carla-roach) collected initially don't include all the necessary information for training ”plan” and ”leads” predictions. Therefore, we modified the code to allow for proper data collection.
+The dataset [Roach](https://github.com/zhejz/carla-roach) collected initially don't include all the necessary information for training ”plan”, ”leads” predictions and "lane lines" detection. Therefore, we modified the code to allow for proper data collection.
 
 `Modify_Roach/rgb.py` collect camera position, camera rotation, and lead car information.
 
 `Modify_Roach/speed.py` collect car speed, accel.
+
+`Modify_Roach/lane_markings.py` and `Modify_Roach/config_lane_markings.py` collect lane lines information.
 
 1. Replace following files 
 
  * Path of `rgb.py` in Roach : `carla-roach/carla_gym/core/obs_manager/camera/rgb.py`
   
  * Path of `speed.py` in Roach : `carla-roach/carla_gym/core/obs_manager/actor_state/speed.py`
+
+2. Add following files
+
+ * `lane_markings.py` and `config_lane_markings.py` in Roach : `carla-roach/carla_gym/core/obs_manager/camera`
   
 2. Modify framerate to 20 (Supercombo takes two consecutive frames with a framerate of 20 as input)
 
