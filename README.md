@@ -107,25 +107,35 @@ The dataset [Roach](https://github.com/zhejz/carla-roach) collected initially do
 
  * `lane_markings.py` and `config_lane_markings.py` in Roach : `carla-roach/carla_gym/core/obs_manager/camera`
   
-2. Modify framerate to 20 (Supercombo takes two consecutive frames with a framerate of 20 as input)
+3. Modify framerate to 20 (Supercombo takes two consecutive frames with a framerate of 20 as input)
 
 * Modify `carla-roach/carla_gym/carla_multi_agent_env.py` line [173](https://github.com/zhejz/carla-roach/blob/main/carla_gym/carla_multi_agent_env.py#L173C43-L173C43)
   ```
         settings.fixed_delta_seconds = 0.05
   ```
-3. Collect dataset with Roach
+4. Modify the resolution settings, FOV settings and camera position
+
+   * Modify `carla-roach/config/agent/cilrs/obs_configs/central_rgb_wide.yaml`
+  ```
+  fov: 40
+  width: 1440
+  height: 960
+  location: [0.8, 0.0, 1.13]
+  rotation: [0.0, 0.0, 0.0]
+  ```
+5. Collect dataset with Roach
 * ex. Collect `n_episodes=240` with `cc_data` environment
 ## Installations
 1. Clone the repo
 ```bash
-git clone https://github.com/yumeg6/Openpilot_BalancedRegression_Adapter.git
+git clone https://github.com/Jackie890621/Openpilot_finetune.git
 ```
 
 2. Install [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/linux.html) if you don't have it yet 
 3. Install the repo's conda environment:
 
 ```bash
-cd openpilot-pipeline/
+cd openpilot_finetune/
 conda env create -f environment.yml
 ```
 4. Ensure the conda environment is always activated:
