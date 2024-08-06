@@ -35,7 +35,11 @@ def get_rotation_rate(rotation):
          3.90625   ,  4.30664062,  4.7265625 ,  5.16601562,  5.625     ,
          6.10351562,  6.6015625 ,  7.11914062,  7.65625   ,  8.21289062,
          8.7890625 ,  9.38476562, 9.9)
-    )git clone https://github.com/Jackie890621/Openpilot_finetune.git
+    )
+    rotation_rate = np.zeros((199,3))
+    for i in range(len(rotation)-1):
+        rotation_rate[i] = (rotation[i+1] - rotation[i]) * 20.0
+    time_rotation_rate = np.linspace(0, 9.9, num=199)
     fs = [interp1d(time_rotation_rate, rotation_rate[:, j]) for j in range(3)]
     interp_rr = [fs[j](t_anchors)[:, None] for j in range(3)]
     interp_rr = np.concatenate(interp_rr, axis=1)
