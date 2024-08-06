@@ -178,9 +178,17 @@ python dataloader.py <training_data_directory>
 ```
    
 6. Run Training
+
+* In `phase 1`, comment out `train/train_AWL_GAI_RepAda_laneline.py` line [886-887](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L886) to freeze lane lines
+* In `phase 2`, uncomment `train/train_AWL_GAI_RepAda_laneline.py` line [886-887](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L886) to train lane lines and comment out `train/train_AWL_GAI_RepAda_laneline.py` line [882-884](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L882), line [889-890](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L889) to freeze plans and leads
+* In `phase 3`, uncomment those above to train all tasks
+* In `every phases`, make sure to modify checkpoints directory and result directoy in `train/train_AWL_GAI_RepAda_laneline.py` line [856-857](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L856)
+* In `phase 2` and `phase 3`, make sure to uncomment `train/train_AWL_GAI_RepAda_laneline.py` line [951-952](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L951) to load the result from last phase
+
+Training example: 
   ```bash
   cd train/
-  python train_AWL_GAI_RepAda_laneline.py --date_it <run_name> --recordings_basedir <training_data_dir> --mhp_loss --batch_size 10 --epochs 70 --val_frequency 1000
+  python train_AWL_GAI_RepAda_laneline.py --date_it <wandb_name> --recordings_basedir <training_data_dir> --mhp_loss --batch_size 10 --epochs 70 --val_frequency 1000
   ```
 The only required parameters are `--date_it`, `--recordings_basedir`, and also `--mhp_loss`(we use the dataset different from [openpilot-pipeline](https://github.com/mbalesni/openpilot-pipeline/tree/main)). Other parameters description of the parameters:
 
