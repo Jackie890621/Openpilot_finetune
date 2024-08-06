@@ -190,23 +190,6 @@ Best model weights : [Download](https://drive.google.com/file/d/1iykNlB3FnfI0MVm
    ```bash
    python viz_video.py
    ```
-#### Result
-1. result-1
- * original Supercombo
-![iamge](./doc/pretrained_142_18s_37s.gif)
-
- * finetuned Supercombo with RepAdapter
-
-![iamge](./doc/Rep_142_18s_37s.gif)
-
-2. result-2
- * original Supercombo
-![iamge](./doc/pretrained_microlino.gif)
-
- * finetuned Supercombo with RepAdapter
-
-![iamge](./doc/Rep_microlino.gif)
-
 ## Using the Model
 > **Note:** We fine-tune the original CommaAI's supercombo model from Openpilot version 0.8.11.
 
