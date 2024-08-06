@@ -146,21 +146,41 @@ conda activate optrain
 ## Training
 
 1. Get the dataset with modified Roach.
-2. Create video files from dataset ,and create ground truth using`create_dataset.py`
+2. Create video files and ground truth using `create_dataset.py`
 ```bash
-python create_dataset.py <dataset_directory>
+python create_dataset.py <original_dataset_directory>
 ```
-3. Set up [wandb](https://docs.wandb.ai/quickstart)
+3. Put ground truth and video files into same directory for training usage
+```
+training_data
+├── 0000.h5
+├── 0000.mp4
+├── 0001.h5
+├── 0001.mp4
+      .
+      .
+      .
+```
+   
+3. Use `cache/generate_cache.py` to generate `videos.txt` and `plans.txt`
+```bash
+cd cache/
+python generate_cache.py <training_data_directory>
+```
+4. Set up [wandb](https://docs.wandb.ai/quickstart)
 * Modify `train/train_AWL_GAI_RepAda_laneline.py` line [894](https://github.com/Jackie890621/Openpilot_finetune/blob/efbdcb8805fbb502040987e79b4e5d2b444fa9a6/train/train_AWL_GAI_RepAda_laneline.py#L894)
 * Modify `train/train_RepAda_laneline_comma2k19.py` line [491](https://github.com/Jackie890621/Openpilot_finetune/blob/efbdcb8805fbb502040987e79b4e5d2b444fa9a6/train/train_RepAda_laneline_comma2k19.py#L491)
 
-4. Generate pkl file for training leads
+5. Generate pkl file for training leads
+```bash
+cd train/
+python dataloader.py <training_data_directory>
+```
    
-5. Run Training
-  * Phase 1 example
+6. Run Training
   ```bash
   cd train/
-  python train_AWL_GAI_RepAda.py --date_it <run_name> --recordings_basedir <dataset_dir> --mhp_loss --batch_size 10 --epochs 70 --val_frequency 1000
+  python train_AWL_GAI_RepAda_laneline.py --date_it <run_name> --recordings_basedir <training_data_dir> --mhp_loss --batch_size 10 --epochs 70 --val_frequency 1000
   ```
 The only required parameters are `--date_it`, `--recordings_basedir`, and also `--mhp_loss`(we use the dataset different from [openpilot-pipeline](https://github.com/mbalesni/openpilot-pipeline/tree/main)). Other parameters description of the parameters:
 
