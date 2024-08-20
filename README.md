@@ -213,7 +213,7 @@ The only required parameters are `--date_it`, `--recordings_basedir`, and also `
 * `--val_frequency` - validation loop runs after this many batches. Default is `400`.
 
 ## Evaluation
-Best model weights : [Download](https://drive.google.com/file/d/1iykNlB3FnfI0MVmD0Hy13AliRa6XsuKl/view?usp=drive_link)
+Best model weights : [Download](https://drive.google.com/file/d/1HMJr_y1VSMRRTmSiN-ZWkq-GHcFbXIxw/view?usp=sharing)
 ### AP
 1. Modify `pth_path`, `log_path`, and `num_list` to yours in `train/eval_AP.py`
 2. Run evaluation
