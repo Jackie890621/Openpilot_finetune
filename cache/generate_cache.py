@@ -1,15 +1,20 @@
 import os
+import sys
 
-path = "/home/t2-503-4090/QianXi/training_data/openpilot_camera_laneline"
-f = open("videos.txt", 'w')
-f2 = open("plans.txt", 'w')
-
-for file_name in sorted(os.listdir(path)):
-    file_name = os.path.join(path, file_name)
-    
-    if file_name.endswith('.mp4'):
-        f.write(file_name + '\n')
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python generate_cache.py <dataset_directory>")
     else:
-        f2.write(file_name + '\n')
+        dataset_dir = sys.argv[1]
 
+        f = open("videos.txt", 'w')
+        f2 = open("plans.txt", 'w')
+
+        for file_name in sorted(os.listdir(dataset_dir)):
+            file_name = os.path.join(dataset_dir, file_name)
+            
+            if file_name.endswith('.mp4') or file_name.endswith('.hevc'):
+                f.write(file_name + '\n')
+            else:
+                f2.write(file_name + '\n')
 

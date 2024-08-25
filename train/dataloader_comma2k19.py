@@ -309,9 +309,11 @@ class CommaDataset(IterableDataset):
                 # shift slice by +1 to skip the 1st step which didn't see 2 stacked frames yet
                 abs_t_indices = slice(sequence_idx*self.seq_len, (sequence_idx+1)*self.seq_len)
                 gt_plan_seq = segment_gts['plans'][abs_t_indices]
+                gt_plan_prob_seq = segment_gts['plans_prob'][abs_t_indices]
                 gt_lanelines_lr_seq = segment_gts['lanelines'][abs_t_indices]
+                gt_lanelines_prob_seq = segment_gts['laneline_probs'][abs_t_indices]
 
-                yield stacked_frame_seq, gt_plan_seq, gt_lanelines_lr_seq, segment_finished, worker_id
+                yield stacked_frame_seq, gt_plan_seq, gt_plan_prob_seq, gt_lanelines_lr_seq, gt_lanelines_prob_seq, segment_finished, worker_id
 
             segment_gts.close()
             segment_video.release()
@@ -456,10 +458,12 @@ class BatchDataLoader:
 
         stacked_frames = torch.stack([item[0] for item in batch])
         gt_plan = torch.stack([item[1] for item in batch])
-        gt_lanelines = torch.stack([item[2] for item in batch])
-        segment_finished = torch.tensor([item[3] for item in batch])
+        gt_plan_prob = torch.stack([item[2] for item in batch])
+        gt_lanelines = torch.stack([item[3] for item in batch])
+        gt_lanelines_prob = torch.stack([item[4] for item in batch])
+        segment_finished = torch.tensor([item[5] for item in batch])
 
-        return stacked_frames, gt_plan, gt_lanelines, segment_finished
+        return stacked_frames, gt_plan, gt_plan_prob, gt_lanelines, gt_lanelines_prob, segment_finished
 
     def __len__(self):
         return len(self.loader)

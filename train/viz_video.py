@@ -1,6 +1,6 @@
 import sys
 ######################################################################################
-sys.path.append("/home/t2-503-4090/QianXi/Openpilot_BalancedRegression_Adapter")
+sys.path.append("/home/t2-503-4090/QianXi/Openpilot_finetune")
 ######################################################################################
 from utils import Calibration, draw_path, printf, extract_preds, load_h5_roach, extract_gt_roach
 import os

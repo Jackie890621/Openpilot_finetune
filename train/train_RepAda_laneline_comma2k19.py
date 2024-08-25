@@ -11,7 +11,7 @@ import numpy as np
 from tqdm import tqdm
 import torch
 import torch.optim as topt
-from torch.nn import CrossEntropyLoss, BCELoss
+from torch.nn import CrossEntropyLoss, BCELoss, SmoothL1Loss
 import torch.nn.functional as F
 from dataloader_comma2k19 import CommaDataset, BatchDataLoader, BackgroundGenerator, load_transformed_video, configure_worker
 from torch.utils.data import DataLoader
@@ -25,6 +25,7 @@ import sys
 import dotenv
 import shutil
 import math
+from AutomaticWeightedLoss import AutomaticWeightedLoss
 from get_bucket import get_bucket_info
 import joblib
 from collections import defaultdict
@@ -69,7 +70,63 @@ def path_laplacian_nll_loss(mean_true, mean_pred, sigma, sigma_clamp: float = 1e
     nll = err * torch.exp(-sigma) + sigma
     return nll.sum(dim=(1,2))
 
-def lanelines_loss(lanelines_pred, lanelines_gt, device): # not correct do not use (wrong reshape)
+def sim_loss(lanelines_pred):
+    lane_lines_deflat = lanelines_pred.reshape((-1, 2, 264))  # (N, 2, 264)
+    lane_lines_means = lane_lines_deflat[:, 0, :]  # (N, 264)
+    lane_lines_means = lane_lines_means.reshape(-1, 4, 33, 2)  # (N, 4, 33, 2)
+    loss_all = 0
+
+    for i in range(4): # 4 lanes
+        loss_one_lane = []
+        for j in range(32): # 32 points differnce
+            loss_one_lane.append(lane_lines_means[:, i, j+1, 0] - lane_lines_means[:, i, j, 0])
+
+        loss = torch.cat(loss_one_lane)
+        loss_all += torch.nn.functional.smooth_l1_loss(loss, torch.zeros_like(loss))
+
+    return loss_all
+class ParsingRelationLoss(torch.nn.Module):
+    def __init__(self):
+        super(ParsingRelationLoss, self).__init__()
+    def forward(self,logits):
+        n,c,h,w = logits.shape
+        loss_all = []
+        for i in range(0,h-1):
+            loss_all.append(logits[:,:,i,:] - logits[:,:,i+1,:])
+        #loss0 : n,c,w
+        loss = torch.cat(loss_all)
+        return torch.nn.functional.smooth_l1_loss(loss,torch.zeros_like(loss))
+
+class ParsingRelationDis(torch.nn.Module):
+    def __init__(self):
+        super(ParsingRelationDis, self).__init__()
+        self.l1 = torch.nn.L1Loss()
+        # self.l1 = torch.nn.MSELoss()
+    def forward(self, x):
+        n,dim,num_rows,num_cols = x.shape
+        x = torch.nn.functional.softmax(x[:,:dim-1,:,:],dim=1)
+        embedding = torch.Tensor(np.arange(dim-1)).float().to(x.device).view(1,-1,1,1)
+        pos = torch.sum(x*embedding,dim = 1)
+
+        diff_list1 = []
+        for i in range(0,num_rows // 2):
+            diff_list1.append(pos[:,i,:] - pos[:,i+1,:])
+
+        loss = 0
+        for i in range(len(diff_list1)-1):
+            loss += self.l1(diff_list1[i],diff_list1[i+1])
+        loss /= len(diff_list1) - 1
+        return loss
+
+def lanelines_prob_loss(lanelines_prob_pred, lanelines_prob_gt, device):
+    lanelines_prob_pred = lanelines_prob_pred.reshape((-1, 4, 2))  # (N, 4, 2)
+    lanelines_prob_pred = torch.sigmoid(lanelines_prob_pred[:, :, 1])  # (N, 4), 0th is deprecated
+    
+    loss = torch.nn.functional.smooth_l1_loss(lanelines_prob_pred, lanelines_prob_gt)
+
+    return loss
+
+def lanelines_loss(lanelines_pred, lanelines_gt, device):
 
     # lane lines gt
     outer_left_lane = lanelines_gt[:, 0, :, :]
@@ -107,16 +164,68 @@ def lanelines_loss(lanelines_pred, lanelines_gt, device): # not correct do not u
 
     return lanelines_head_loss
 
+def plan_mhp_loss(plan_pred, plan_gt, plan_prob_gt, device):
+
+    batch_size = plan_pred.shape[0]
+
+    best_gt_plan_idx = torch.argmax(plan_prob_gt, dim=1)
+
+    paths = plan_pred.reshape(-1, 5, 991)
+    path1_pred = paths[:, 0, :-1].reshape(-1, 2, 33, 15)
+    path2_pred = paths[:, 1, :-1].reshape(-1, 2, 33, 15)
+    path3_pred = paths[:, 2, :-1].reshape(-1, 2, 33, 15)
+    path4_pred = paths[:, 3, :-1].reshape(-1, 2, 33, 15)
+    path5_pred = paths[:, 4, :-1].reshape(-1, 2, 33, 15)
+    path_pred_prob = paths[:, :, -1]
+    
+    path_gt = plan_gt[torch.arange(plan_gt.shape[0]), best_gt_plan_idx]
+    mean_gt_path, _ = mean_std(path_gt)
+
+    mean_pred_path1, std_pred_path1 = mean_std(path1_pred)
+    mean_pred_path2, std_pred_path2 = mean_std(path2_pred)
+    mean_pred_path3, std_pred_path3 = mean_std(path3_pred)
+    mean_pred_path4, std_pred_path4 = mean_std(path4_pred)
+    mean_pred_path5, std_pred_path5 = mean_std(path5_pred)
+
+
+    path1_loss = path_laplacian_nll_loss(mean_gt_path, mean_pred_path1, std_pred_path1)
+    path2_loss = path_laplacian_nll_loss(mean_gt_path, mean_pred_path2, std_pred_path2)
+    path3_loss = path_laplacian_nll_loss(mean_gt_path, mean_pred_path3, std_pred_path3)
+    path4_loss = path_laplacian_nll_loss(mean_gt_path, mean_pred_path4, std_pred_path4)
+    path5_loss = path_laplacian_nll_loss(mean_gt_path, mean_pred_path5, std_pred_path5)
+
+    # MHP loss
+    path_head_loss = torch.stack([path1_loss, path2_loss, path3_loss, path4_loss, path5_loss]).T
+
+    idx = torch.argmin(path_head_loss, dim=1)
+    best_path_mask = torch.zeros((batch_size, 5), device=device)
+    mask = torch.full((batch_size, 5), 1e-6, device=device)
+    best_path_mask[torch.arange(idx.shape[0]), idx] = 1
+    mask[torch.arange(idx.shape[0]), idx] = 1
+
+    path_perhead_loss = torch.mul(path_head_loss, mask)
+    path_perhead_loss = path_perhead_loss.sum(dim=1).mean()
+
+    cross_entropy_loss = CrossEntropyLoss(reduction='mean')
+    path_prob_loss = cross_entropy_loss(path_pred_prob, best_path_mask)
+
+    plan_loss = path_perhead_loss + path_prob_loss
+    return plan_loss
+
 def train(run, model, train_loader, val_loader, optimizer, scheduler, recurr_warmup, epoch, 
-          log_frequency_steps, train_segment_for_viz, val_segment_for_viz, batch_size):
+          log_frequency_steps, train_segment_for_viz, val_segment_for_viz, batch_size, awl):
 
     recurr_input = torch.zeros(batch_size, 512, dtype=torch.float32, device=device, requires_grad=True)
     desire = torch.zeros(batch_size, 8, dtype=torch.float32, device=device)
     traffic_convention = torch.zeros(batch_size, 2, dtype=torch.float32, device=device)
     traffic_convention[:, 1] = 1
     model.train()
+    awl.train()
 
     train_loss_accum = 0.0
+    log_loss2 = 0.0
+    log_loss3 = 0.0
+    log_loss4 = 0.0
     segments_finished = True
 
     start_point = time.time()
@@ -136,11 +245,10 @@ def train(run, model, train_loader, val_loader, optimizer, scheduler, recurr_war
 
         should_backprop = (not recurr_warmup) or (recurr_warmup and not segments_finished)
 
-        stacked_frames, gt_plans, gt_lanelines, segments_finished = batch
+        stacked_frames, gt_plans, gt_plans_prob, gt_lanelines, gt_lanelines_prob, segments_finished = batch
         segments_finished = torch.all(segments_finished)
 
-        loss, recurr_input = train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines,
-                        desire, traffic_convention, recurr_input, device, timings, should_backprop=should_backprop)
+        loss, loss2, loss3, loss4, recurr_input = train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_plans_prob, gt_lanelines, gt_lanelines_prob, desire, traffic_convention, recurr_input, device, timings, should_backprop, awl)
 
         train_batch_time = multitimings.end('train_batch')
         fps = batch_size * seq_len / train_batch_time
@@ -152,19 +260,24 @@ def train(run, model, train_loader, val_loader, optimizer, scheduler, recurr_war
             recurr_input = recurr_input.zero_().detach()
 
         train_loss_accum += loss
+        log_loss2 += loss2
+        log_loss3 += loss3
+        log_loss4 += loss4
 
         if should_run_valid:
             #with Timing(timings, 'visualize_preds'):
             #    visualize_predictions(model, device, train_segment_for_viz, val_segment_for_viz)
             with Timing(timings, 'validate'):
-                val_loss = validate(model, val_loader, batch_size, device)
+                val_loss = validate(model, val_loader, batch_size, device, awl)
 
             scheduler.step(val_loss.item())
 
             checkpoint_save_file = 'commaitr' + date_it + str(val_loss) + '_' + str(epoch+1) + ".pth"
             checkpoint_save_path = os.path.join(checkpoints_dir, checkpoint_save_file)
             torch.save(model.state_dict(), checkpoint_save_path)
+            print("epoch:", epoch, "saved!")
             model.train()
+            awl.train()
 
             wandb.log({
                 'validation_loss': val_loss,
@@ -173,8 +286,14 @@ def train(run, model, train_loader, val_loader, optimizer, scheduler, recurr_war
         if should_log_train:
             timings['forward_pass']['time'] *= seq_len
             timings['lanelines_loss']['time'] *= seq_len
+            timings['lanelines_prob_loss']['time'] *= seq_len
+            #timings['continue_loss']['time'] *= seq_len
+            timings['path_plan_loss']['time'] *= seq_len
         
             running_loss = train_loss_accum.item() / log_frequency_steps
+            laneline_loss = log_loss2.item() / log_frequency_steps
+            laneline_prob_loss = log_loss3.item() / log_frequency_steps
+            path_plan_loss = log_loss4.item() / log_frequency_steps
 
             printf()
             printf(f'Epoch {epoch+1}/{epochs}. Done {tr_it+1} steps of ~{train_loader_len}. Running loss: {running_loss:.4f}')
@@ -184,12 +303,19 @@ def train(run, model, train_loader, val_loader, optimizer, scheduler, recurr_war
             wandb.log({
                 'epoch': epoch,
                 'train_tol_loss': running_loss,
+                'lanelines_loss': laneline_loss,
+                'lanelines_prob_loss': laneline_prob_loss,
+                #'continue_loss': con_loss,
+                'path_plan_loss': path_plan_loss,
                 'lr': scheduler.optimizer.param_groups[0]['lr'],
                 **{f'time_{k}': v['time'] / v['count'] for k, v in timings.items()}
             }, commit=True)
 
             timings = dict()
             train_loss_accum = 0.0
+            log_loss2 = 0.0
+            log_loss3 = 0.0
+            log_loss4 = 0.0
 
         multitimings.start('batch_load')
 
@@ -280,11 +406,11 @@ def visualize_predictions(model, device, train_segment_for_viz, val_segment_for_
             gc.collect()
 
 
-def validate(model, data_loader, batch_size, device):
+def validate(model, data_loader, batch_size, device, awl):
 
     model.eval()
+    awl.eval()
     
-    # dice.eval()
     # saving memory by not accumulating activations
     with torch.no_grad():
 
@@ -295,10 +421,10 @@ def validate(model, data_loader, batch_size, device):
         recurr_input = torch.zeros(batch_size, 512, dtype=torch.float32, device=device, requires_grad=False)
         for val_itr, val_batch in enumerate(data_loader):
 
-            val_stacked_frames, val_plans, val_lanelines, segments_finished = val_batch
+            val_stacked_frames, val_plans, val_plans_prob, val_lanelines, val_lanelines_prob, segments_finished = val_batch
             segments_finished = torch.all(segments_finished)
 
-            batch_loss, recurr_input = validate_batch(model, val_stacked_frames, val_plans, val_lanelines, recurr_input, device)
+            batch_loss, recurr_input = validate_batch(model, val_stacked_frames, val_plans, val_plans_prob, val_lanelines, val_lanelines_prob, recurr_input, device, awl)
             val_loss += batch_loss
 
             if segments_finished:
@@ -317,16 +443,22 @@ def validate(model, data_loader, batch_size, device):
         return val_avg_loss
 
 
-def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, gt_desire, traffic_convention, recurr_input, device, timings, should_backprop=True, awl=None):
+def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_plans_prob, gt_lanelines, gt_lanelines_prob, gt_desire, traffic_convention, recurr_input, device, timings, should_backprop, awl):
     seq_len = stacked_frames.shape[1]
 
     with Timing(timings, 'inputs_to_gpu'):
         stacked_frames = stacked_frames.to(device).float()  # -- (batch_size, seq_len, 12, 128, 256)
+        gt_plans = gt_plans.to(device)  # -- (batch_size,seq_len,5,2,33,15)
+        gt_plans_prob = gt_plans_prob.to(device)  # -- (batch_size,seq_len,5,1)
         gt_lanelines = gt_lanelines.to(device) # -- (batch_size,seq_len,2,33,2)
+        gt_lanelines_prob = gt_lanelines_prob.to(device)  
 
     optimizer.zero_grad(set_to_none=True)
 
     batch_laneline_loss = 0.0
+    batch_lanelines_prob_loss = 0.0
+    batch_plan_loss = 0.0
+    #batch_awl_loss = 0.0
 
     for i in range(seq_len):
 
@@ -340,10 +472,23 @@ def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, g
             outputs = model(**inputs_to_pretained_model)  # -- > [32,6472]
 
         lanelines_predictions = outputs[:, 4955:5483].clone()  # -- > 528 lanelines
+        lanelines_prob_predictions = outputs[:, 5483:5491].clone()  # -- > 8 lanelines_prob
+        plan_predictions = outputs[:, :4955].clone()  # -- > [32,4955]
         recurr_out = outputs[:, 5960:].clone()  # -- > [32,512] important to refeed state of GRU
 
         with Timing(timings, 'lanelines_loss'):
             step_lanelines_loss = lanelines_loss(lanelines_predictions, gt_lanelines[:, i, :, :, :], device)
+
+        with Timing(timings, 'lanelines_prob_loss'):
+            step_lanelines_prob_loss = lanelines_prob_loss(lanelines_prob_predictions, gt_lanelines_prob[:, i, :], device)
+
+        with Timing(timings, 'path_plan_loss'):
+            loss_func = plan_distill_loss if run.config.distill else plan_mhp_loss
+            step_plan_loss = loss_func(plan_predictions, gt_plans[:, i, :, :, :, :], gt_plans_prob[:, i, :], device)
+        
+        #with Timing(timings, 'continue_loss'):
+           # step_continue_loss = sim_loss(lanelines_predictions)
+            
 
         if i == seq_len - 1:
             # final hidden state in sequence, no need to backpropagate it through time
@@ -352,12 +497,21 @@ def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, g
             recurr_input = recurr_out.clone()
 
         batch_laneline_loss += step_lanelines_loss
+        batch_lanelines_prob_loss += step_lanelines_prob_loss
+        batch_plan_loss += step_plan_loss
+        #batch_continue_loss += step_continue_loss
+        #batch_awl_loss += awl(step_lanelines_loss, step_lanelines_prob_loss, step_continue_loss)
 
     batch_laneline_loss /= seq_len
+    batch_lanelines_prob_loss /= seq_len
+    batch_plan_loss /= seq_len
+    #batch_awl_loss /= seq_len
+    
+    complete_batch_loss = batch_laneline_loss + batch_lanelines_prob_loss + batch_plan_loss
 
     if should_backprop:
         with Timing(timings, 'backward_pass'):
-            batch_laneline_loss.backward(retain_graph=True)
+            complete_batch_loss.backward(retain_graph=True)
 
     with Timing(timings, 'clip_gradients'):
         torch.nn.utils.clip_grad_norm_(model.parameters(), run.config.grad_clip)
@@ -365,11 +519,14 @@ def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, g
     with Timing(timings, 'optimize_step'):
         optimizer.step()
 
-    loss = batch_laneline_loss.detach()
-    return loss, recurr_out.detach()
+    loss2 = batch_laneline_loss.detach()
+    loss3 = batch_lanelines_prob_loss.detach()
+    loss4 = batch_plan_loss.detach()
+    loss = complete_batch_loss.detach()
+    return loss, loss2, loss3, loss4, recurr_out.detach()
 
 
-def validate_batch(model, val_stacked_frames, val_plans, val_lanelines, recurr_input, device):
+def validate_batch(model, val_stacked_frames, val_plans, val_plans_prob, val_lanelines, val_lanelines_prob, recurr_input, device, awl):
     batch_size = val_stacked_frames.shape[0]
     seq_len = val_stacked_frames.shape[1]
 
@@ -378,7 +535,10 @@ def validate_batch(model, val_stacked_frames, val_plans, val_lanelines, recurr_i
     traffic_convention[:, 1] = 1
 
     val_input = val_stacked_frames.float().to(device)
+    val_label_path = val_plans.to(device)
+    val_label_path_prob = val_plans_prob.to(device)
     val_lanelines = val_lanelines.to(device)
+    val_lanelines_prob = val_lanelines_prob.to(device)
 
     val_batch_loss = 0.0
 
@@ -389,13 +549,20 @@ def validate_batch(model, val_stacked_frames, val_plans, val_lanelines, recurr_i
                                          "initial_state": recurr_input}
 
         val_outputs = model(**val_inputs_to_pretained_model)  # --> [32,6472]
+        val_path_prediction = val_outputs[:, :4955].clone()  # --> [32,4955]
+        val_lanelines_prob_predictions = val_outputs[:, 5483:5491].clone()  # -- > 8 lanelines_prob
         recurr_input = val_outputs[:, 5960:].clone()  # --> [32,512] important to refeed state of GRU
         val_lanelines_predictions = val_outputs[:, 4955:5483].clone()  # -- > 528 lanelines
     
         single_lanelines_loss = lanelines_loss(val_lanelines_predictions, val_lanelines[:, i, :, :, :], device)
+        single_lanelines_prob_loss = lanelines_prob_loss(val_lanelines_prob_predictions, val_lanelines_prob[:, i, :], device)
+        loss_func = plan_distill_loss if run.config.distill else plan_mhp_loss
+        single_plan_loss = loss_func(val_path_prediction, val_label_path[:, i, :, :, :, :], val_label_path_prob[:, i, :], device)
+
+        val_batch_loss += single_lanelines_loss + single_lanelines_prob_loss + single_plan_loss
     
     #val_batch_loss = val_batch_loss / seq_len / batch_size
-    val_batch_loss = single_lanelines_loss / seq_len
+    val_batch_loss = val_batch_loss / seq_len
     return val_batch_loss.detach(), recurr_input
 
 
@@ -450,8 +617,8 @@ if __name__ == "__main__":
     comma_recordings_basedir = args.recordings_basedir
     path_to_supercombo = '../common/models/supercombo.onnx'
 
-    checkpoints_dir = './nets/701_2phase_comma2k19'
-    result_model_dir = './nets/701_2phase_comma2k19'
+    checkpoints_dir = './nets/823_comma2k19_2'
+    result_model_dir = './nets/823_comma2k19_2'
     os.makedirs(checkpoints_dir, exist_ok=True)
     os.makedirs(result_model_dir, exist_ok=True)
 
@@ -476,13 +643,14 @@ if __name__ == "__main__":
     
     pathplan_layer_names = [ "Conv_785", "Conv_797", "Conv_809", "Conv_832", #RepAdapter
                              "Conv_844", "Conv_856", "Conv_868", "Conv_891", #RepAdapter
-                            #  "Gemm_959", "Gemm_981","Gemm_983","Gemm_1036", #plan
+                             "Gemm_959", "Gemm_981","Gemm_983","Gemm_1036", #plan
                             #  "Gemm_961", "Gemm_986","Gemm_988","Gemm_1037", #leads
                             #  "Gemm_963", "Gemm_991","Gemm_993","Gemm_1038", #lead_prob
                              "Gemm_969", "Gemm_1006","Gemm_1008","Gemm_1041", #outer_left_lane
                              "Gemm_971", "Gemm_1011","Gemm_1013","Gemm_1042", #left_lane
                              "Gemm_973", "Gemm_1016","Gemm_1018","Gemm_1043", #right_lane
                              "Gemm_975", "Gemm_1021","Gemm_1023","Gemm_1044", #outer_right_lane
+                             "Gemm_965", "Gemm_996","Gemm_998","Gemm_1039", #laneline_prob
                             #  "Gemm_979", "Gemm_1031","Gemm_1033","Gemm_1046", #desire_state
                             #  "Gemm_912", "Gemm_921","Gemm_923","Gemm_932", #desire_prob
                              ]
@@ -539,20 +707,22 @@ if __name__ == "__main__":
 
     printf("=>Loading the model")
 
-    pth_path = "/home/t2-503-4090/QianXi/Openpilot_BalancedRegression_Adapter/train/nets/model_itr/adapter_1928x1208.pth"
+    pth_path = "/media/NVMe_SSD_980_PRO/Meng-Tai/Openpilot_finetune/train/nets/0619_laneline.pth"
     comma_model = load_trainable_model(path_to_supercombo, trainable_layers=pathplan_layer_names)
     with open("./model_freeze.txt",'w') as freeze_txt:
         for name, param in comma_model.named_parameters():
             freeze_txt.write(f'{name} : {param.requires_grad}\n')
             #print(f'{name} : {param.requires_grad}')
 
-    comma_model.load_state_dict(torch.load(pth_path))
+    # comma_model.load_state_dict(torch.load(pth_path))
     comma_model = comma_model.to(device)
+    awl = AutomaticWeightedLoss(num=3)
+    awl = awl.to(device)
 
     wandb.watch(comma_model) # Log the gradients  
 
     param_group = comma_model.parameters()
-    optimizer = topt.Adam([{'params': param_group}], lr, weight_decay=l2_lambda)
+    optimizer = topt.Adam([{'params': param_group},{'params': awl.parameters()}], lr, weight_decay=l2_lambda)
     scheduler = topt.lr_scheduler.ReduceLROnPlateau(optimizer, factor=lrs_factor, patience=lrs_patience,
                                                     threshold=lrs_thresh, verbose=True, min_lr=lrs_min,
                                                     cooldown=lrs_cd)
@@ -570,7 +740,7 @@ if __name__ == "__main__":
                 for epoch in tqdm(range(epochs)):
                     train(run, comma_model, train_loader, val_loader, optimizer, scheduler,
                         recurr_warmup, epoch, log_frequency_steps,
-                        train_segment_for_viz, val_segment_for_viz, batch_size)
+                        train_segment_for_viz, val_segment_for_viz, batch_size, awl)
 
         result_model_save_path = os.path.join(result_model_dir, train_run_name + '.pth')
         torch.save(comma_model.state_dict(), result_model_save_path)

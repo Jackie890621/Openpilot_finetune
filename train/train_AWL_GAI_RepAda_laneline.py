@@ -704,7 +704,7 @@ def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, g
         batch_desire_pb_loss += sg_desire_pb_loss
         batch_desire_st_loss += sg_desire_st_loss
         batch_laneline_loss += step_lanelines_loss
-        batch_awl_loss += awl(sg_plan_loss, sg_leads_loss, step_lanelines_loss, sg_plan_pb_loss, sg_leads_pb_loss, sg_pb_lead_loss, sg_desire_pb_loss, sg_desire_st_loss)
+        batch_awl_loss += awl(sg_plan_pb_loss, sg_leads_pb_loss, sg_pb_lead_loss, sg_desire_pb_loss, sg_desire_st_loss)
 
     #complete_batch_loss = batch_loss / seq_len / batch_size_empirical  # mean of losses over batches of sequences
     batch_plan_loss /= seq_len
@@ -718,8 +718,8 @@ def train_batch(run, model, optimizer, stacked_frames, gt_plans, gt_lanelines, g
     batch_awl_loss /= seq_len
 
     if awl is not None :
-        # complete_batch_loss = batch_plan_loss + batch_leads_loss + batch_laneline_loss + batch_awl_loss
-        complete_batch_loss = batch_awl_loss
+        complete_batch_loss = batch_plan_loss + batch_leads_loss + batch_laneline_loss + batch_awl_loss
+        # complete_batch_loss = batch_awl_loss
     else :
         complete_batch_loss = batch_plan_loss + batch_plan_pb_loss + batch_leads_loss + batch_leads_pb_loss + batch_pb_lead_loss + batch_desire_pb_loss + batch_desire_st_loss + batch_laneline_loss
 
@@ -797,7 +797,7 @@ def validate_batch(model, val_stacked_frames, val_plans, val_lanelines, val_lead
         #single_desire_loss,_,_ = desire_loss(val_meta_predictions, val_desire_state_predictions, val_desire[:,i,:], device)
         _, sg_desire_pb_loss, sg_desire_st_loss = desire_loss(val_meta_predictions, val_desire_state_predictions, val_desire[:,i,:], device)
         #val_batch_loss += (single_val_loss + single_leads_loss + single_desire_loss)
-        val_batch_loss += awl(sg_plan_loss, sg_leads_loss, single_lanelines_loss, sg_plan_pb_loss, sg_leads_pb_loss, sg_pb_lead_loss, sg_desire_pb_loss, sg_desire_st_loss)
+        val_batch_loss += sg_plan_loss +_sg_leads_loss + single_lanelines_loss + awl(sg_plan_pb_loss, sg_leads_pb_loss, sg_pb_lead_loss, sg_desire_pb_loss, sg_desire_st_loss)
 
     #val_batch_loss = val_batch_loss / seq_len / batch_size
     val_batch_loss = val_batch_loss / seq_len
@@ -951,7 +951,7 @@ if __name__ == "__main__":
     # pth_path = "/home/t2-503-4090/QianXi/Openpilot_BalancedRegression_Adapter/train/nets/701_2phase_comma2k19/0701_laneline.pth"
     # comma_model.load_state_dict(torch.load(pth_path))
     comma_model = comma_model.to(device)
-    awl = AutomaticWeightedLoss(num=8)
+    awl = AutomaticWeightedLoss(num=5)
     awl = awl.to(device)
 
     gai_1 = GAILoss("gmm_131.pkl")
