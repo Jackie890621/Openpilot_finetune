@@ -242,8 +242,6 @@ docker pull gary111125/openpilot-sim:latest
 3. Replace files in docker
  * Replace original model to custom model
 ```bash
-docker cp Openpilot_lateralMPC/lateral_planner.py CONTAINER_ID:/openpilot/selfdrive/controls/lib/lateral_planner.py
-docker cp Openpilot_lateralMPC/lat_mpc.py CONTAINER_ID:/openpilot/selfdrive/controls/lib/lateral_mpc_lib/lat_mpc.py
 docker cp <model_path_onnx> CONTAINER_ID:/openpilot/models/supercombo.onnx
 ```
 4. Make modeld fit with version 0.8.11
