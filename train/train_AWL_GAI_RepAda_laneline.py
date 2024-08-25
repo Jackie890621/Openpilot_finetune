@@ -882,10 +882,10 @@ if __name__ == "__main__":
                             "Gemm_959", "Gemm_981","Gemm_983","Gemm_1036", #plan
                             "Gemm_961", "Gemm_986","Gemm_988","Gemm_1037", #leads
                             "Gemm_963", "Gemm_991","Gemm_993","Gemm_1038", #lead_prob
-                            "Gemm_969", "Gemm_1006","Gemm_1008","Gemm_1041", #outer_left_lane
+                            # "Gemm_969", "Gemm_1006","Gemm_1008","Gemm_1041", #outer_left_lane
                             "Gemm_971", "Gemm_1011","Gemm_1013","Gemm_1042", #left_lane
                             "Gemm_973", "Gemm_1016","Gemm_1018","Gemm_1043", #right_lane
-                            "Gemm_975", "Gemm_1021","Gemm_1023","Gemm_1044", #outer_right_lane
+                            # "Gemm_975", "Gemm_1021","Gemm_1023","Gemm_1044", #outer_right_lane
                             "Gemm_979", "Gemm_1031","Gemm_1033","Gemm_1046", #desire_state
                             "Gemm_912", "Gemm_921","Gemm_923","Gemm_932", #desire_prob
                             ]

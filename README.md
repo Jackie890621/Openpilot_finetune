@@ -2,15 +2,16 @@
 
 ## Introduction
 
-This repository allows training custom driving models for [Openpilot](https://github.com/commaai/openpilot) using datasets collected from [Roach](https://github.com/zhejz/carla-roach).
+This repository allows training custom driving models for [Openpilot](https://github.com/commaai/openpilot) using datasets collected from [Roach](https://github.com/zhejz/carla-roach) and [Comma2k19](https://github.com/commaai/comma2k19).
 
-we leverage the adapter architecture to fine-tune the Supercombo model using datasets collected from a reinforcement learning agent in the CARLA simulator. This approach allows us to preserve the original weights in Openpilot, which have been trained on a large-scale dataset using significant computing resources. The adapter architecture enables efficient adaptation of pretrained models for downstream tasks. Our approach not only includes path prediction but also incorporates lead car prediction.
+we leverage the adapter architecture to fine-tune the Supercombo model using datasets collected from a reinforcement learning agent in the CARLA simulator. This approach allows us to preserve the original weights in Openpilot, which have been trained on a large-scale dataset using significant computing resources. The adapter architecture enables efficient adaptation of pretrained models for downstream tasks. Our approach not only includes path prediction and lead car prediction but also incorporates lane lines detection.
 
 * [Directory Structure](#directory-structure) 
 * [Quick Preview](#quick-preview)
     * [Adapter](#adapter)
     * [Multi-Task Learning](#multi-task-learning)
     * [Balanced Regression](#balanced-regression)
+    * [Phase training](#phase-training)
 * [Data Collection](#data-collection)
 * [Installations](#installations)
 * [Training](#training)
@@ -23,7 +24,7 @@ we leverage the adapter architecture to fine-tune the Supercombo model using dat
 ## Directory Structure
 
 ```
-Openpilot_BalancedRegression_Adapter
+Openpilot_finetune
 ├── Openpilot_lateralMPC   - For changing lateralMPC of Openpilot in docker.
 ├── common                 - Library like functionality from Openpilot.  Ex. Coordinate transformation
 ├── train                  - Main training code.
@@ -80,38 +81,61 @@ def gai_loss(pred, target, gmm, noise_scale):
 
     return loss.squeeze()
 ```
+### Phase training
+The fine-tuning procedure for the Supercombo model involves the following phases:
+
+* First phase: Utilize Carla-Roach datasets to fine-tune Supercombo model for leading car prediction and path prediction.
+* Second phase: Further fine-tune the model from First phase using Comma2k19 datasets to enhance lane lines detection.
+* Third phase: Fine-tune the model from Second phase using Carla-Roach datasets to integrate leading car prediction, path prediction, and lane lines detection
+
 ## Data Collection
-The dataset [Roach](https://github.com/zhejz/carla-roach) collected initially don't include all the necessary information for training ”plan” and ”leads” predictions. Therefore, we modified the code to allow for proper data collection.
+The dataset [Roach](https://github.com/zhejz/carla-roach) collected initially don't include all the necessary information for training ”plan”, ”leads” predictions and "lane lines" detection. Therefore, we modified the code to allow for proper data collection.
 
 `Modify_Roach/rgb.py` collect camera position, camera rotation, and lead car information.
 
 `Modify_Roach/speed.py` collect car speed, accel.
+
+`Modify_Roach/lane_markings.py` and `Modify_Roach/config_lane_markings.py` collect lane lines information.
 
 1. Replace following files 
 
  * Path of `rgb.py` in Roach : `carla-roach/carla_gym/core/obs_manager/camera/rgb.py`
   
  * Path of `speed.py` in Roach : `carla-roach/carla_gym/core/obs_manager/actor_state/speed.py`
+
+2. Add following files
+
+ * `lane_markings.py` and `config_lane_markings.py` in Roach : `carla-roach/carla_gym/core/obs_manager/camera`
   
-2. Modify framerate to 20 (Supercombo takes two consecutive frames with a framerate of 20 as input)
+3. Modify framerate to 20 (Supercombo takes two consecutive frames with a framerate of 20 as input)
 
 * Modify `carla-roach/carla_gym/carla_multi_agent_env.py` line [173](https://github.com/zhejz/carla-roach/blob/main/carla_gym/carla_multi_agent_env.py#L173C43-L173C43)
   ```
         settings.fixed_delta_seconds = 0.05
   ```
-3. Collect dataset with Roach
+4. Modify the resolution settings, FOV settings and camera position
+
+   * Modify `carla-roach/config/agent/cilrs/obs_configs/central_rgb_wide.yaml`
+  ```
+  fov: 40
+  width: 1440
+  height: 960
+  location: [0.8, 0.0, 1.13]
+  rotation: [0.0, 0.0, 0.0]
+  ```
+5. Collect dataset with Roach
 * ex. Collect `n_episodes=240` with `cc_data` environment
 ## Installations
 1. Clone the repo
 ```bash
-git clone https://github.com/yumeg6/Openpilot_BalancedRegression_Adapter.git
+git clone https://github.com/Jackie890621/Openpilot_finetune.git
 ```
 
 2. Install [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/linux.html) if you don't have it yet 
 3. Install the repo's conda environment:
 
 ```bash
-cd openpilot-pipeline/
+cd openpilot_finetune/
 conda env create -f environment.yml
 ```
 4. Ensure the conda environment is always activated:
@@ -122,13 +146,49 @@ conda activate optrain
 ## Training
 
 1. Get the dataset with modified Roach.
-2. Create video files from dataset ,and create ground truth using`def create_gt_distill_roach` in `utils.py`
-3. Set up [wandb](https://docs.wandb.ai/quickstart)
-4. Run Training
-  * example
+2. Create video files and ground truth using `create_dataset.py`
+```bash
+python create_dataset.py <original_dataset_directory>
+```
+3. Put ground truth and video files into same directory for training usage
+```
+training_data
+├── 0000.h5
+├── 0000.mp4
+├── 0001.h5
+├── 0001.mp4
+      .
+      .
+      .
+```
+   
+3. Use `cache/generate_cache.py` to generate `videos.txt` and `plans.txt`
+```bash
+cd cache/
+python generate_cache.py <training_data_directory>
+```
+4. Set up [wandb](https://docs.wandb.ai/quickstart)
+* Modify `train/train_AWL_GAI_RepAda_laneline.py` line [894](https://github.com/Jackie890621/Openpilot_finetune/blob/efbdcb8805fbb502040987e79b4e5d2b444fa9a6/train/train_AWL_GAI_RepAda_laneline.py#L894)
+* Modify `train/train_RepAda_laneline_comma2k19.py` line [491](https://github.com/Jackie890621/Openpilot_finetune/blob/efbdcb8805fbb502040987e79b4e5d2b444fa9a6/train/train_RepAda_laneline_comma2k19.py#L491)
+
+5. Generate pkl file for training leads
+```bash
+cd train/
+python dataloader.py <training_data_directory>
+```
+   
+6. Run Training
+
+* In `phase 1`, comment out `train/train_AWL_GAI_RepAda_laneline.py` line [886-887](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L886) to freeze lane lines
+* In `phase 2`, uncomment `train/train_AWL_GAI_RepAda_laneline.py` line [886-887](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L886) to train lane lines and comment out `train/train_AWL_GAI_RepAda_laneline.py` line [882-884](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L882), line [889-890](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L889) to freeze plans and leads
+* In `phase 3`, uncomment those above to train all tasks
+* In `every phases`, make sure to modify checkpoints directory and result directoy in `train/train_AWL_GAI_RepAda_laneline.py` line [856-857](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L856)
+* In `phase 2` and `phase 3`, make sure to uncomment `train/train_AWL_GAI_RepAda_laneline.py` line [951-952](https://github.com/Jackie890621/Openpilot_finetune/blob/1e11d24552f650856637af5f27db9a6cd1bde8c1/train/train_AWL_GAI_RepAda_laneline.py#L951) to load the result from last phase
+
+Training example: 
   ```bash
   cd train/
-  python train_AWL_GAI_RepAda.py --date_it <run_name> --recordings_basedir <dataset_dir> --mhp_loss --batch_size 10 --epochs 100 --val_frequency 1000
+  python train_AWL_GAI_RepAda_laneline.py --date_it <wandb_name> --recordings_basedir <training_data_dir> --mhp_loss --batch_size 10 --epochs 70 --val_frequency 1000
   ```
 The only required parameters are `--date_it`, `--recordings_basedir`, and also `--mhp_loss`(we use the dataset different from [openpilot-pipeline](https://github.com/mbalesni/openpilot-pipeline/tree/main)). Other parameters description of the parameters:
 
@@ -166,23 +226,6 @@ Best model weights : [Download](https://drive.google.com/file/d/1iykNlB3FnfI0MVm
    ```bash
    python viz_video.py
    ```
-#### Result
-1. result-1
- * original Supercombo
-![iamge](./doc/pretrained_142_18s_37s.gif)
-
- * finetuned Supercombo with RepAdapter
-
-![iamge](./doc/Rep_142_18s_37s.gif)
-
-2. result-2
- * original Supercombo
-![iamge](./doc/pretrained_microlino.gif)
-
- * finetuned Supercombo with RepAdapter
-
-![iamge](./doc/Rep_microlino.gif)
-
 ## Using the Model
 > **Note:** We fine-tune the original CommaAI's supercombo model from Openpilot version 0.8.11.
 
@@ -212,15 +255,10 @@ ModelOutput *model_output = model_eval_frame(&model, buf_main, nullptr, model_tr
 ```C
   //const ModelOutputStopLines stop_lines;
 ```
-5. Change camera position
- * Modify `/openpilot/tools/sim/bridge.py` line 268, from `carla.Location(x=0.8, z=1.13)` to `carla.Location(x=-1.5, z=2.0)`
-```python
-transform = carla.Transform(carla.Location(x=-1.5, z=2.0))
-```
-6. Compile
+5. Compile
 ```bash
 cd /openpilot
 scons -j$(nproc)
 ```
-7. Then you can run Openpilot in custom version
+6. Then you can run Openpilot in custom version
 
